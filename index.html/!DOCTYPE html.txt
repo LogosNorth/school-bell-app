@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#6200ea">
+    <title>School Bell PWA</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 15px;
+            background: #f5f5f5;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        h1 { font-size: 1.5em; text-align: center; color: #333; }
+        .section { background: white; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        select, input, button {
+            font-size: 1em;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            background: #6200ea;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:disabled { background: #ccc; }
+        #qrcode, #video, #canvas { margin: 10px 0; width: 100%; }
+        #scheduleList, #userSchedule { border: 1px solid #ddd; padding: 10px; border-radius: 5px; }
+        video { border-radius: 5px; }
+        @media (max-width: 600px) {
+            video { width: 100%; height: auto; }
+            #qrcode canvas { width: 100% !important; height: auto !important; }
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+</head>
+<body>
+    <h1>School Bell</h1>
+    
+    <div class="section">
+        <h2>Admin: Set Schedules</h2>
+        <select id="day">
+            <option>Sunday</option>
+            <option>Monday</option>
+            <option>Tuesday</option>
+            <option>Wednesday</option>
+            <option>Thursday</option>
+            <option>Friday</option>
+            <option>Saturday</option>
+        </select>
+        <input type="time" id="time">
+        <button onclick="addTime()">Add Time</button>
+        <div id="scheduleList"></div>
+        <button onclick="generateQR()">Generate QR Code</button>
+        <div id="qrcode"></div>
+    </div>
+    
+    <div class="section">
+        <h2>User: Scan Schedule</h2>
+        <button onclick="startScan()">Scan QR Code</button>
+        <video id="video" playsinline style="display: none;"></video>
+        <canvas id="canvas" style="display: none;"></canvas>
+        <div id="userSchedule"></div>
+        <button onclick="startAlarms()" disabled id="startAlarmBtn">Start Alarms</button>
+    </div>
+
+    <script>
+        let schedule = {
+            Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: []
+        };
+        let scanning = false;
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const startAlarmBtn = document.getElementById('startAlarmBtn');
+
+        // Load schedule from localStorage if available
+        if (localStorage.getItem('schedule')) {
+            schedule = JSON.parse(localStorage.getItem('schedule'));
+            displayUserSchedule();
+            startAlarmBtn.disabled = false;
+        }
+
+        function addTime() {
+            const day = document.getElementById('day').value;
+            const time = document.getElementById('time').value;
+            if (time) {
+                schedule[day].push(time);
+                schedule[day].sort();
+                localStorage.setItem('schedule', JSON.stringify(schedule));
+                updateScheduleList();
+            }
+        }
+
+        function updateScheduleList() {
+            const list = document.getElementById('scheduleList');
+            list.innerHTML = '';
+            Object.keys(schedule).forEach(day => {
+                if (schedule[day].length > 0) {
+                    list.innerHTML += `<p><strong>${day}:</strong> ${schedule[day].join(', ')}</p>`;
+                }
+            });
+        }
+
+        function generateQR() {
+            const json = JSON.stringify(schedule);
+            document.getElementById('qrcode').innerHTML = '';
+            new QRCode(document.getElementById('qrcode'), {
+                text: json,
+                width: 200,
+                height: 200
+            });
+        }
+
+        function startScan() {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+                .then(stream => {
+                    scanning = true;
+                    video.srcObject = stream;
+                    video.style.display = 'block';
+                    video.play();
+                    requestAnimationFrame(tick);
+                })
+                .catch(err => alert('Camera access denied: ' + err.message));
+        }
+
+        function tick() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA && scanning) {
+                canvas.height = video.videoHeight;
+                canvas.width = video.videoWidth;
+                canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+                if (code) {
+                    try {
+                        schedule = JSON.parse(code.data);
+                        localStorage.setItem('schedule', JSON.stringify(schedule));
+                        displayUserSchedule();
+                        stopScan();
+                        startAlarmBtn.disabled = false;
+                    } catch (e) {
+                        alert('Invalid QR data');
+                    }
+                }
+            }
+            if (scanning) requestAnimationFrame(tick);
+        }
+
+        function stopScan() {
+            scanning = false;
+            video.style.display = 'none';
+            if (video.srcObject) video.srcObject.getTracks()[0].stop();
+        }
+
+        function displayUserSchedule() {
+            const userList = document.getElementById('userSchedule');
+            userList.innerHTML = '<h3>Schedule:</h3>';
+            Object.keys(schedule).forEach(day => {
+                if (schedule[day].length > 0) {
+                    userList.innerHTML += `<p><strong>${day}:</strong> ${schedule[day].join(', ')}</p>`;
+                }
+            });
+        }
+
+        function startAlarms() {
+            Notification.requestPermission().then(permission => {
+                if (permission === 'granted') {
+                    setInterval(checkTime, 60000);
+                } else {
+                    alert('Notifications denied. Using alerts instead.');
+                    setInterval(checkTime, 60000);
+                }
+            });
+        }
+
+        function checkTime() {
+            const now = new Date();
+            const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][now.getDay()];
+            const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+            if (schedule[day] && schedule[day].includes(currentTime)) {
+                if (Notification.permission === 'granted') {
+                    new Notification('School Bell: Time!', { body: `Alarm for ${day} ${currentTime}` });
+                } else {
+                    alert(`School Bell: Time for ${day} ${currentTime}!`);
+                }
+                const audio = new Audio('bell.mp3');
+                audio.play().catch(e => console.error('Audio error:', e));
+            }
+        }
+
+        // Register service worker for PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').then(() => {
+                console.log('Service Worker Registered');
+            }).catch(err => console.error('Service Worker Error:', err));
+        }
+    </script>
+</body>
+</html>
